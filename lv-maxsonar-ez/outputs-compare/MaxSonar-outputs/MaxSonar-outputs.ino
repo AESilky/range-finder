@@ -52,8 +52,8 @@
 // ///////////////////////////////////////////////////////////////////////////////////////////////////////
 // Debugging help -
 //  Provide debug serial print macros that can be easily enabled/disabled.
-//  set 'DEBUG_OUTPUT' to 'true' to print debug output, set to 'false' to not print debug output
-#define DEBUG_OUTPUT true
+//  set 'DEBUG_OUTPUT' to 'true' to print debug output, set to 'false' to supress print debug output
+#define DEBUG_OUTPUT false
 #if DEBUG_OUTPUT
  #define DB_PRINT(s) Serial.print(s)
  #define DB_PRINTNB(n,b) Serial.print(n,b)
@@ -108,7 +108,9 @@ void setup() {
   }
 
   Serial.println("");
-  Serial.println("LV-MaxSonar-EZ and HC-SR04 measurements test. Distance data sent: Pulse, Serial, Analog, [HC-SR04]");
+  Serial.println("<<< ============================================================================================== >>>");
+  Serial.println("<<<  LV-MaxSonar-EZ and HC-SR04 measurements. Distance data sent: Pulse, Serial, Analog, [HC-SR04] >>>");
+  Serial.println("<<< ============================================================================================== >>>");
   Serial.println("");
   Serial.println();
   delay(1000);
@@ -126,11 +128,8 @@ void setup() {
 }
 
 void loop() {
-  DB_PRINTLN("loop()");
-  // Print the graph header at start and then every 20 lines of output
-  if (loopCount++ % 20 == 0) {
-    Serial.println("Pulse\tSerial\tAnalog\tHC-SR04");
-  }
+  DB_PRINTLN("<<< ---------------------------------------------------------------------------------------------- >>>");
+  DB_PRINT("Loop("); DB_PRINT(loopCount); DB_PRINTLN(")");
   // Trigger a measurement and read the distance using the pulse-width method
   // then the serial and analog methods
   int pwDistance = tiggerAndReadDistanceFromPulse();
@@ -141,6 +140,11 @@ void loop() {
   if (includeSR04()) {
     int sr04Distance = sr04ReadDistance();
     dataValues += sr04Distance;
+  }
+  // Print the graph header at start and then every 20 lines of output
+  DB_PRINTLN("Pulse\tSerial\tAnalog\tHC-SR04");
+  if (loopCount++ % 20 == 0) {
+    Serial.println("Pulse\tSerial\tAnalog\tHC-SR04");
   }
   Serial.println(dataValues);
   // wait for 1/4 second total to pass
@@ -161,7 +165,7 @@ void loop() {
 int readDistanceFromAnalog() {
   int rawValue = analogRead(MAX_AN_PIN);
   int distance = rawValue / MAX_ANALOG_DIVISOR;
-  DB_PRINT("\nA:"); DB_PRINT(rawValue); DB_PRINT(" D:"); DB_PRINTLN(distance);
+  DB_PRINT("\nA|"); DB_PRINT(rawValue); DB_PRINT(" D|"); DB_PRINTLN(distance);
 
   return distance;
 }
@@ -186,9 +190,9 @@ int readDistanceFromSerial() {
   for (; timeout > 0 && maxSerial.available() < 5; timeout--) {
     delay(1);
   }
-  DB_PRINT("\n t:"); DB_PRINT(timeout); DB_PRINT(" cc:"); DB_PRINT(maxSerial.available());
+  DB_PRINT("\n t|"); DB_PRINT(timeout); DB_PRINT(" cc|"); DB_PRINT(maxSerial.available());
   if (timeout > 0) { // didn't time out
-    DB_PRINT(" data:[");
+    DB_PRINT(" data|[");
     // Build up the string looking for a carriage-return ('\r') or a maximum of
     // 5 characters. MaxSonar format is "Rxxx\r".
     // 
@@ -209,7 +213,7 @@ int readDistanceFromSerial() {
     // Convert the string to an integer value
     distance = atoi(&text[1]);
   }
-  DB_PRINT("] text:'"); DB_PRINT(text); DB_PRINT("' distance:"); DB_PRINTLN(distance);
+  DB_PRINT("] text|'"); DB_PRINT(text); DB_PRINT("' distance|"); DB_PRINTLN(distance);
 
   return distance;
 }
@@ -229,7 +233,7 @@ int tiggerAndReadDistanceFromPulse() {
   DB_PRINT(" clear("); DB_PRINT(maxSerial.available()); DB_PRINT(")-");
   maxSerial.stopListening();
   maxSerial.listen();
-  DB_PRINT("("); DB_PRINT(maxSerial.available()); DB_PRINT("):");
+  DB_PRINT("("); DB_PRINT(maxSerial.available()); DB_PRINT(")|");
   // Assure that the trigger is set to IDLE (HOLD)
   digitalWrite(MAX_READ_MODE_PIN, MAX_READ_IDLE);
   delayMicroseconds(10);
@@ -258,7 +262,7 @@ int tiggerAndReadDistanceFromPulse() {
     delay(1);
   }
   // Analog and Serial can now be read as well
-  DB_PRINT(" pw:"); DB_PRINT(pulseWidth); DB_PRINT(" distance:"); DB_PRINT(distance); DB_PRINT(" fnT:"); DB_PRINTLN(millis() - startMillis);
+  DB_PRINT(" pw|"); DB_PRINT(pulseWidth); DB_PRINT(" distance|"); DB_PRINT(distance); DB_PRINT(" fnT|"); DB_PRINTLN(millis() - startMillis);
   
   return distance;
 }
@@ -294,11 +298,13 @@ int sr04ReadDistance()
   digitalWrite(SR04_TRIGGER_PIN, HIGH);
   delayMicroseconds(10);
   digitalWrite(SR04_TRIGGER_PIN, LOW);
-  duration = pulseIn(SR04_ECHO_PIN, HIGH, 38000); // Wait for the echo with a timeout of 38m (from datasheet for no object detected)
+  // Wait for the echo with timeout of < 18,000μs (just over 10' (20' round trip) just less than datasheet max)
+  duration = pulseIn(SR04_ECHO_PIN, HIGH, 18000);
+  duration = (duration >= 18000 ? 0 : duration);
   distance = (int)(((float)duration / SOUND_SPEED_uSpIN) / 2.0); // divide by 2 due to round trip (out and back)
   digitalWrite(SR04_TRIGGER_PIN, HIGH);
 
-  DB_PRINT(" duration:"); DB_PRINT(duration); DB_PRINT(" distance:"); DB_PRINTLN(distance);
+  DB_PRINT(" duration|"); DB_PRINT(duration); DB_PRINT(" distance|"); DB_PRINTLN(distance);
   
   return distance;
 }
