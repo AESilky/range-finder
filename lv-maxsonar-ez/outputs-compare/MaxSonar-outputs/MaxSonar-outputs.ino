@@ -1,19 +1,21 @@
 /**
- * Test the LV-MaxSonar-EZ range finder output methods on an Arduino.
- * Optionally also measure using an (inexpensive) HC-SR04 device.
+ * Test the LV-MaxSonar-EZ sonar range finder output methods with an Arduino.
+ * Additionally test using the less expensive HC-SR04 device to compare the results 
+ * and ease of use.
  *
- * This uses the different data output methods of the LV-MaxSonar-EZ to see if there
- * are any noticable differences in the values read by the Arduino and to illustrate
- * the code required to read the values using the different methods.
+ * This uses the three different data output methods of the LV-MaxSonar-EZ to see 
+ * if there is any noticable difference in the values read by the Arduino and to 
+ * illustrate the code required to read the values using the different methods. 
+ * It also uses the more common (for hobby use) HC-SR04 device.
  *
  * The methods are (pin is on MaxSonar device):
  * 1. Serial Data on pin 5. Format:9600,8,n,1 Data:"Rxxx\n" xxx=0-255in.
- *    Enabled when BW (pin 1) is open/low. If BW* is pulled high this becomes a
- *    trigger pulse for multiple device chaining.
+ *    Enabled when BW (pin 1) is open/low. If BW is pulled high this becomes a
+ *    trigger output pulse for multiple device chaining.
  * 2. Analog Voltage on pin 3. Value is Vcc/512 per inch. Supply of 5V:~9.8mV/in,
- *    3.3V:~6.4mV/in), buffered to provide continuous output corresponding to the most
- *    recent range data.
- * 3. Pulse high at 147uS per inch
+ *    3.3V:~6.4mV/in), buffered to provide continuous output corresponding to the 
+ *    most recent range reading.
+ * 3. Pulse high on pin 2 at 147uS per inch
  *
  * Control (pin is on MaxSonar device):
  * 1. BW on pin 1 controls the function of TX on pin 5. When open or pulled low serial
@@ -43,10 +45,27 @@
  *  datasheet: https://www.elecrow.com/download/HC_SR04%20Datasheet.pdf
  */
 
-
 // Libraries
 #include <stdlib.h>
 #include <SoftwareSerial.h>
+
+// ///////////////////////////////////////////////////////////////////////////////////////////////////////
+// Debugging help -
+//  Provide debug serial print macros that can be easily enabled/disabled.
+//  set 'DEBUG_OUTPUT' to 'true' to print debug output, set to 'false' to not print debug output
+#define DEBUG_OUTPUT true
+#if DEBUG_OUTPUT
+ #define DB_PRINT(s) Serial.print(s)
+ #define DB_PRINTNB(n,b) Serial.print(n,b)
+ #define DB_PRINTLN(s) Serial.println(s)
+ #define DB_PRINTNBLN(n,b) Serial.println(n,b)
+#else
+ #define DB_PRINT(s)
+ #define DB_PRINTNB(n,b)
+ #define DB_PRINTLN(s)
+ #define DB_PRINTNBLN(n,b)
+#endif
+// ///////////////////////////////////////////////////////////////////////////////////////////////////////
 
 // Constants
 //  GPIO Pins (digital)
@@ -71,12 +90,13 @@
 #define MAX_ANALOG_DIVISOR 2
 // HC-SR04 control/constants
 #define SR04_INCLUDED LOW
-//  Speed of Sound @ 23°C = 344.5 m/S = 34450.0 cm/S
+//  Speed of Sound @ 22°C (71.6°F) = 344.5 m/S = 34450.0 cm/S
 //  0.0000290275 S/cm = 29.0275762 uS/cm = 73.73 uS/in
 #define SOUND_SPEED_uSpIN 73.73
 
 // Globals
-SoftwareSerial maxSerial(MAX_SDATA_PIN, 3, true); // RX,TX,inverse_logic (only RX is used)
+SoftwareSerial maxSerial(MAX_SDATA_PIN, 3, true); // RX,TX,inverse_logic (TX is not used)
+int loopCount = 0; // Used to track the times through loop
 
 void setup() {
   Serial.begin(38400); // Open serial communications
@@ -87,11 +107,13 @@ void setup() {
     ; // wait...
   }
 
-  Serial.println("LV-MaxSonar-EZ measurements test. Distance data sent:\tPulse\tSerial\tAnalog\t[HC-SR04]\n");
-  delay(1000);
+  Serial.println("");
+  Serial.println("LV-MaxSonar-EZ and HC-SR04 measurements test. Distance data sent: Pulse, Serial, Analog, [HC-SR04]");
+  Serial.println("");
   Serial.println();
+  delay(1000);
 
-  // Configure the rest of the pins used for the MaxSonar and HC-SR04 (optional)
+  // Configure the rest of the pins used for the MaxSonar and HC-SR04
   pinMode(MAX_PW_PIN, INPUT);
   pinMode(MAX_AN_PIN, INPUT);
   digitalWrite(MAX_READ_MODE_PIN, MAX_READ_IDLE); // Use 'triggered' mode
@@ -104,25 +126,24 @@ void setup() {
 }
 
 void loop() {
-  //Serial.println("loop()");
+  DB_PRINTLN("loop()");
+  // Print the graph header at start and then every 20 lines of output
+  if (loopCount++ % 20 == 0) {
+    Serial.println("Pulse\tSerial\tAnalog\tHC-SR04");
+  }
   // Trigger a measurement and read the distance using the pulse-width method
   // then the serial and analog methods
   int pwDistance = tiggerAndReadDistanceFromPulse();
   int serialDistance = readDistanceFromSerial();
   int analogDistance = readDistanceFromAnalog();
   // Send the values to the monitor/plotter
-  String dataValues = String(pwDistance);
-  dataValues += '\t';
-  dataValues += serialDistance;
-  dataValues += '\t';
-  dataValues += analogDistance;
+  String dataValues = String(pwDistance) + '\t' + String(serialDistance) + '\t' + String(analogDistance) + '\t';
   if (includeSR04()) {
     int sr04Distance = sr04ReadDistance();
-    dataValues += '\t';
     dataValues += sr04Distance;
   }
   Serial.println(dataValues);
-  // wait for 1/4 second to pass
+  // wait for 1/4 second total to pass
   delay(250 - MAX_READ_REQUIRED_DURATION_mS);
 }
 
@@ -140,7 +161,7 @@ void loop() {
 int readDistanceFromAnalog() {
   int rawValue = analogRead(MAX_AN_PIN);
   int distance = rawValue / MAX_ANALOG_DIVISOR;
-  //Serial.print("\nA:"); Serial.print(rawValue); Serial.print(" D:"); Serial.println(distance);
+  DB_PRINT("\nA:"); DB_PRINT(rawValue); DB_PRINT(" D:"); DB_PRINTLN(distance);
 
   return distance;
 }
@@ -160,14 +181,14 @@ int readDistanceFromSerial() {
   text[0] = '\0';
   
   // Wait for a character to become available (or the maximum time for a measurement)
-  //Serial.print("\nS ("); Serial.print(maxSerial.available()); Serial.print(")...");
+  DB_PRINT("\nS ("); DB_PRINT(maxSerial.available()); DB_PRINT(")...");
   int timeout = MAX_READ_REQUIRED_DURATION_mS;
   for (; timeout > 0 && maxSerial.available() < 5; timeout--) {
     delay(1);
   }
-  //Serial.print("\n t:"); Serial.print(timeout); Serial.print(" cc:"); Serial.print(maxSerial.available());
+  DB_PRINT("\n t:"); DB_PRINT(timeout); DB_PRINT(" cc:"); DB_PRINT(maxSerial.available());
   if (timeout > 0) { // didn't time out
-    //Serial.print(" data:[");
+    DB_PRINT(" data:[");
     // Build up the string looking for a carriage-return ('\r') or a maximum of
     // 5 characters. MaxSonar format is "Rxxx\r".
     // 
@@ -180,7 +201,7 @@ int readDistanceFromSerial() {
     if (maxSerial.available() >= 5) {
       for(; i<5; i++) {
         char c = (char)maxSerial.read();
-        //Serial.print("'0x"); Serial.print(c,HEX); Serial.print("'");
+        DB_PRINT("'0x"); DB_PRINTNB(c,HEX); DB_PRINT("'");
         text[i] = (c != '\r' ? c : '\0'); // terminate with null when RETURN is received
       }
       text[i] = '\0'; // Add null terminator
@@ -188,7 +209,7 @@ int readDistanceFromSerial() {
     // Convert the string to an integer value
     distance = atoi(&text[1]);
   }
-  //Serial.print("] text:'"); Serial.print(text); Serial.print("' distance:"); Serial.println(distance);
+  DB_PRINT("] text:'"); DB_PRINT(text); DB_PRINT("' distance:"); DB_PRINTLN(distance);
 
   return distance;
 }
@@ -203,12 +224,12 @@ int readDistanceFromSerial() {
  * Refer to the Timing Diagram and Description in the datasheet for timing details.
  */
 int tiggerAndReadDistanceFromPulse() {
-  //Serial.print("\nMax Trigger...");
+  DB_PRINT("\nMax Trigger...");
   // Clear out the maxSerial read buffer...
-  //Serial.print(" clear("); Serial.print(maxSerial.available()); Serial.print(")-");
+  DB_PRINT(" clear("); DB_PRINT(maxSerial.available()); DB_PRINT(")-");
   maxSerial.stopListening();
   maxSerial.listen();
-  //Serial.print("("); Serial.print(maxSerial.available()); Serial.print("):");
+  DB_PRINT("("); DB_PRINT(maxSerial.available()); DB_PRINT("):");
   // Assure that the trigger is set to IDLE (HOLD)
   digitalWrite(MAX_READ_MODE_PIN, MAX_READ_IDLE);
   delayMicroseconds(10);
@@ -225,7 +246,7 @@ int tiggerAndReadDistanceFromPulse() {
   // Trigger and measure
   digitalWrite(MAX_READ_MODE_PIN, MAX_READ_TRIGGER);
   delayMicroseconds(10);
-  unsigned long pulseWidth = pulseIn(MAX_PW_PIN, HIGH, (MAX_PW_START_DELAY_MAX_uS + (MAX_READ_REQUIRED_DURATION_mS * 1000)));
+  unsigned long pulseWidth = pulseIn(MAX_PW_PIN, HIGH, (MAX_PW_START_DELAY_MAX_uS + (MAX_READ_REQUIRED_DURATION_mS * 1000L)));
   int distance = (int)(pulseWidth / MAX_PW_uS_PER_INCH);
   digitalWrite(MAX_READ_MODE_PIN, MAX_READ_IDLE);
  
@@ -237,7 +258,7 @@ int tiggerAndReadDistanceFromPulse() {
     delay(1);
   }
   // Analog and Serial can now be read as well
-  //Serial.print(" pw:"); Serial.print(pulseWidth); Serial.print(" distance:"); Serial.print(distance); Serial.print(" fnT:"); Serial.println(millis() - startMillis);
+  DB_PRINT(" pw:"); DB_PRINT(pulseWidth); DB_PRINT(" distance:"); DB_PRINT(distance); DB_PRINT(" fnT:"); DB_PRINTLN(millis() - startMillis);
   
   return distance;
 }
@@ -267,7 +288,7 @@ int sr04ReadDistance()
   long duration;
   int distance;
   
-  //Serial.print("\nSR04 Trigger...");
+  DB_PRINT("\nSR04 Trigger...");
   digitalWrite(SR04_TRIGGER_PIN, LOW);
   delayMicroseconds(2);
   digitalWrite(SR04_TRIGGER_PIN, HIGH);
@@ -277,7 +298,7 @@ int sr04ReadDistance()
   distance = (int)(((float)duration / SOUND_SPEED_uSpIN) / 2.0); // divide by 2 due to round trip (out and back)
   digitalWrite(SR04_TRIGGER_PIN, HIGH);
 
-  //Serial.print(" duration:"); Serial.print(duration); Serial.print(" distance:"); Serial.println(distance);
+  DB_PRINT(" duration:"); DB_PRINT(duration); DB_PRINT(" distance:"); DB_PRINTLN(distance);
   
   return distance;
 }
