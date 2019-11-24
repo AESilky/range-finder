@@ -9,7 +9,7 @@
  * It also uses the more common (for hobby use) HC-SR04 device.
  *
  * The methods are (pin is on MaxSonar device):
- * 1. Serial Data on pin 5. Format:9600,8,n,1 Data:"Rxxx\n" xxx=0-255in.
+ * 1. Serial Data on pin 5. Format:9600,8,n,1 Data:"Rxxx\r" xxx=0-255in.
  *    Enabled when BW (pin 1) is open/low. If BW is pulled high this becomes a
  *    trigger output pulse for multiple device chaining.
  * 2. Analog Voltage on pin 3. Value is Vcc/512 per inch. Supply of 5V:~9.8mV/in,
@@ -52,19 +52,13 @@
 // ///////////////////////////////////////////////////////////////////////////////////////////////////////
 // Debugging help -
 //  Provide debug serial print macros that can be easily enabled/disabled.
-//  set 'DEBUG_OUTPUT' to 'true' to print debug output, set to 'false' to supress print debug output
-#define DEBUG_OUTPUT false
-#if DEBUG_OUTPUT
- #define DB_PRINT(s) Serial.print(s)
- #define DB_PRINTNB(n,b) Serial.print(n,b)
- #define DB_PRINTLN(s) Serial.println(s)
- #define DB_PRINTNBLN(n,b) Serial.println(n,b)
-#else
- #define DB_PRINT(s)
- #define DB_PRINTNB(n,b)
- #define DB_PRINTLN(s)
- #define DB_PRINTNBLN(n,b)
-#endif
+//  set 'DEBUG_OUTPUT' to 'true' to print debug output, set to 'false' to supress print debug output.
+//  A boolean is used so it can be changed by code.
+bool _DEBUG_OUTPUT = false;
+#define DB_PRINT(s) if(_DEBUG_OUTPUT) {Serial.print(s);}
+#define DB_PRINTNB(n,b) if(_DEBUG_OUTPUT) {Serial.print(n,b);}
+#define DB_PRINTLN(s) if(_DEBUG_OUTPUT) {Serial.println(s);}
+#define DB_PRINTNBLN(n,b) if(_DEBUG_OUTPUT) {Serial.println(n,b);}
 // ///////////////////////////////////////////////////////////////////////////////////////////////////////
 
 // Constants
@@ -74,9 +68,9 @@
 #define MAX_READ_MODE_PIN 4
 #define MAX_SDATA_PIN 2
 //   HC-SR04 pins
-#define SR04_TRIGGER_PIN 6
-#define SR04_ECHO_PIN 7
-#define SR04_INCLUDE_PIN 13
+#define HCSR04_TRIGGER_PIN 6
+#define HCSR04_ECHO_PIN 7
+#define HCSR04_INCLUDE_PIN 13
 //  GPIO Pins (analog)
 #define MAX_AN_PIN A0
 
@@ -89,7 +83,7 @@
 #define MAX_PW_uS_PER_INCH 147
 #define MAX_ANALOG_DIVISOR 2
 // HC-SR04 control/constants
-#define SR04_INCLUDED LOW
+#define HCSR04_INCLUDED LOW
 //  Speed of Sound @ 22°C (71.6°F) = 344.5 m/S = 34450.0 cm/S
 //  0.0000290275 S/cm = 29.0275762 uS/cm = 73.73 uS/in
 #define SOUND_SPEED_uSpIN 73.73
@@ -107,11 +101,14 @@ void setup() {
     ; // wait...
   }
 
-  Serial.println("");
-  Serial.println("<<< ============================================================================================== >>>");
-  Serial.println("<<<  LV-MaxSonar-EZ and HC-SR04 measurements. Distance data sent: Pulse, Serial, Analog, [HC-SR04] >>>");
-  Serial.println("<<< ============================================================================================== >>>");
-  Serial.println("");
+  // Output a header, but don't use ' ' ',' or '\t' so it doesn't get picked up as a Plot Label when using Serial Plotter
+  //  Use Unicode 'En-Space (0x2002)' [ ] instead. Be careful when editing this header - copy the 'space' between the 
+  //  brackets and paste where needed.
+  Serial.println();
+  Serial.println("<<<==================================================================================================>>>");
+  Serial.println("<<< LV-MaxSonar-EZ and HC-SR04 measurements. Distance data sent: Pulse | Serial | Analog | [HC-SR04] >>>");
+  Serial.println("<<<==================================================================================================>>>");
+
   Serial.println();
   delay(1000);
 
@@ -121,14 +118,14 @@ void setup() {
   digitalWrite(MAX_READ_MODE_PIN, MAX_READ_IDLE); // Use 'triggered' mode
   pinMode(MAX_READ_MODE_PIN, OUTPUT);
   // and HC-SR04
-  pinMode(SR04_INCLUDE_PIN, INPUT_PULLUP); // Will be LOW if HC-SR04 should be included in operation
-  digitalWrite(SR04_TRIGGER_PIN, HIGH);
-  pinMode(SR04_TRIGGER_PIN, OUTPUT);
-  pinMode(SR04_ECHO_PIN, INPUT);
+  pinMode(HCSR04_INCLUDE_PIN, INPUT_PULLUP); // Will be LOW if HC-SR04 should be included in operation
+  digitalWrite(HCSR04_TRIGGER_PIN, HIGH);
+  pinMode(HCSR04_TRIGGER_PIN, OUTPUT);
+  pinMode(HCSR04_ECHO_PIN, INPUT);
 }
 
 void loop() {
-  DB_PRINTLN("<<< ---------------------------------------------------------------------------------------------- >>>");
+  DB_PRINTLN("\n<<< ---------------------------------------------------------------------------------------------- >>>");
   DB_PRINT("Loop("); DB_PRINT(loopCount); DB_PRINTLN(")");
   // Trigger a measurement and read the distance using the pulse-width method
   // then the serial and analog methods
@@ -137,14 +134,14 @@ void loop() {
   int analogDistance = readDistanceFromAnalog();
   // Send the values to the monitor/plotter
   String dataValues = String(pwDistance) + '\t' + String(serialDistance) + '\t' + String(analogDistance) + '\t';
-  if (includeSR04()) {
+  if (includeHCSR04()) {
     int sr04Distance = sr04ReadDistance();
     dataValues += sr04Distance;
   }
   // Print the graph header at start and then every 20 lines of output
-  DB_PRINTLN("Pulse\tSerial\tAnalog\tHC-SR04");
+  DB_PRINTLN("\nPulse:\tSerial:\tAnalog:\tHC-SR04:");
   if (loopCount++ % 20 == 0) {
-    Serial.println("Pulse\tSerial\tAnalog\tHC-SR04");
+    Serial.println("Pulse:\tSerial:\tAnalog:\tHC-SR04:");
   }
   Serial.println(dataValues);
   // wait for 1/4 second total to pass
@@ -165,7 +162,7 @@ void loop() {
 int readDistanceFromAnalog() {
   int rawValue = analogRead(MAX_AN_PIN);
   int distance = rawValue / MAX_ANALOG_DIVISOR;
-  DB_PRINT("\nA|"); DB_PRINT(rawValue); DB_PRINT(" D|"); DB_PRINTLN(distance);
+  DB_PRINT("\nA="); DB_PRINT(rawValue); DB_PRINT(" D="); DB_PRINTLN(distance);
 
   return distance;
 }
@@ -190,9 +187,9 @@ int readDistanceFromSerial() {
   for (; timeout > 0 && maxSerial.available() < 5; timeout--) {
     delay(1);
   }
-  DB_PRINT("\n t|"); DB_PRINT(timeout); DB_PRINT(" cc|"); DB_PRINT(maxSerial.available());
+  DB_PRINT("\n t="); DB_PRINT(timeout); DB_PRINT(" cc="); DB_PRINT(maxSerial.available());
   if (timeout > 0) { // didn't time out
-    DB_PRINT(" data|[");
+    DB_PRINT(" data=[");
     // Build up the string looking for a carriage-return ('\r') or a maximum of
     // 5 characters. MaxSonar format is "Rxxx\r".
     // 
@@ -213,7 +210,7 @@ int readDistanceFromSerial() {
     // Convert the string to an integer value
     distance = atoi(&text[1]);
   }
-  DB_PRINT("] text|'"); DB_PRINT(text); DB_PRINT("' distance|"); DB_PRINTLN(distance);
+  DB_PRINT("] text='"); DB_PRINT(text); DB_PRINT("' distance="); DB_PRINTLN(distance);
 
   return distance;
 }
@@ -228,12 +225,12 @@ int readDistanceFromSerial() {
  * Refer to the Timing Diagram and Description in the datasheet for timing details.
  */
 int tiggerAndReadDistanceFromPulse() {
-  DB_PRINT("\nMax Trigger...");
+  DB_PRINTLN("\LV-MaxSonar-EZ Triggered...");
   // Clear out the maxSerial read buffer...
-  DB_PRINT(" clear("); DB_PRINT(maxSerial.available()); DB_PRINT(")-");
+  DB_PRINT(" serial-buffer clear("); DB_PRINT(maxSerial.available()); DB_PRINT(")-");
   maxSerial.stopListening();
   maxSerial.listen();
-  DB_PRINT("("); DB_PRINT(maxSerial.available()); DB_PRINT(")|");
+  DB_PRINT("("); DB_PRINT(maxSerial.available()); DB_PRINTLN(")");
   // Assure that the trigger is set to IDLE (HOLD)
   digitalWrite(MAX_READ_MODE_PIN, MAX_READ_IDLE);
   delayMicroseconds(10);
@@ -262,7 +259,7 @@ int tiggerAndReadDistanceFromPulse() {
     delay(1);
   }
   // Analog and Serial can now be read as well
-  DB_PRINT(" pw|"); DB_PRINT(pulseWidth); DB_PRINT(" distance|"); DB_PRINT(distance); DB_PRINT(" fnT|"); DB_PRINTLN(millis() - startMillis);
+  DB_PRINT(" pw="); DB_PRINT(pulseWidth); DB_PRINT(" distance="); DB_PRINT(distance); DB_PRINT(" f(n)T="); DB_PRINTLN(millis() - startMillis);
   
   return distance;
 }
@@ -277,8 +274,8 @@ int tiggerAndReadDistanceFromPulse() {
  *
  * Return: TRUE if it should be included
  */
-bool includeSR04() {
-  return (digitalRead(SR04_INCLUDE_PIN) == LOW);
+bool includeHCSR04() {
+  return (digitalRead(HCSR04_INCLUDE_PIN) == LOW);
 }
 
 /**
@@ -292,19 +289,77 @@ int sr04ReadDistance()
   long duration;
   int distance;
   
-  DB_PRINT("\nSR04 Trigger...");
-  digitalWrite(SR04_TRIGGER_PIN, LOW);
+  DB_PRINT("\nHC-SR04 Trigger...");
+  digitalWrite(HCSR04_TRIGGER_PIN, LOW);
   delayMicroseconds(2);
-  digitalWrite(SR04_TRIGGER_PIN, HIGH);
+  digitalWrite(HCSR04_TRIGGER_PIN, HIGH);
   delayMicroseconds(10);
-  digitalWrite(SR04_TRIGGER_PIN, LOW);
+  digitalWrite(HCSR04_TRIGGER_PIN, LOW);
   // Wait for the echo with timeout of < 18,000μs (just over 10' (20' round trip) just less than datasheet max)
-  duration = pulseIn(SR04_ECHO_PIN, HIGH, 18000);
+  duration = pulseIn(HCSR04_ECHO_PIN, HIGH, 18000);
   duration = (duration >= 18000 ? 0 : duration);
   distance = (int)(((float)duration / SOUND_SPEED_uSpIN) / 2.0); // divide by 2 due to round trip (out and back)
-  digitalWrite(SR04_TRIGGER_PIN, HIGH);
+  digitalWrite(HCSR04_TRIGGER_PIN, HIGH);
 
-  DB_PRINT(" duration|"); DB_PRINT(duration); DB_PRINT(" distance|"); DB_PRINTLN(distance);
+  DB_PRINT(" duration="); DB_PRINT(duration); DB_PRINT(" distance="); DB_PRINTLN(distance);
   
   return distance;
+}
+
+
+//////////////////////////////////////////////////////////////////////////////
+// Utility Functions
+//////////////////////////////////////////////////////////////////////////////
+
+/**
+ * Read a 'line' from the serial input if available.
+ * 
+ * This function builds a line from the available serial input characters 
+ * until a newline '\n' is read. It uses a global input string to 
+ * accumulate input until the newline is found (to a maximum of 200 characters).
+ * 
+ * When called, if a newline terminated string has not been collected an empty string  
+ * is returned.
+ * 
+ */
+String _inputBuffer = String();
+String serialReadLine() {
+  String retVal = "";
+  while(Serial.available() > 0) {
+    int c = Serial.read();
+    if (c == '\n') {
+      // Found a 'line' of text. Put the string together and return it.
+      retVal = _inputBuffer;
+      _inputBuffer = String();
+    }
+    else {
+      _inputBuffer += c;
+    }
+  }
+
+  return retVal;
+}
+
+/**
+ * Enable/disable DEBUG mode
+ * 
+ * This takes a string in the form:
+ *  debug = 'true'/'false | 'on'/'off'
+ * and enables/disables DEBUG mode.
+ * 
+ * If the input string doesn't conform to the syntax of enabling or disabling 
+ * the DEBUG mode, the function returns false.
+ * 
+ */
+bool setDebugMode(String s) {
+  bool validInput = false;
+
+  // Convert to lowercase to test for arguments
+  s.toLowerCase();
+  if (s.startsWith("debug ")) {
+    s = s.substring(6); // remove 'debug ' and continue...
+  }
+  
+
+  return validInput;
 }
