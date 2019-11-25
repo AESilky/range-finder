@@ -27,15 +27,20 @@
  * will send a pulse to trigger the next device in a chain.
  *
  * Per the Timing Diagram and Timing Description in the datasheet the pulse width value
- * will be available the quickest of the three methods.
+ * will be available first and then the values of other two methods are available.
+ * 
+ * In continuous mode (not used in this sketch) no trigger is necessary and the PW 
+ * and Serial data values will be generated and the analog value updated approximately 
+ * once every 50mS.
  *
  * Datasheet: https://www.maxbotix.com/documents/LV-MaxSonar-EZ_Datasheet.pdf
  *
- * The distance values are sent in tab separated form to the main serial (USB) so
+ * The distance values are sent in tab separated form to the main serial so
  * they can be displayed in the monitor or plotted.
- * They are sent once a second in the format:
+ * They are sent in the format:
  * <pw distance in><tab><serial distance in><tab><analog distance in><cr-lf>
- *
+ * Every 20 rows a label row is sent in a format compatable with the Serial Plotter tool.
+ * 
  * HC-SR04 Range Finder use:
  * A switch (or jumper) enables reading the distance using a HC-SR04 device and
  * including the value in the data sent. If enabled the data format sent is:
@@ -51,8 +56,9 @@
 
 // ///////////////////////////////////////////////////////////////////////////////////////////////////////
 // Debugging help -
-//  Provide debug serial print macros that can be easily enabled/disabled.
+//  Provide debug serial print macros that can be easily and dynamically enabled/disabled.
 //  set 'DEBUG_OUTPUT' to 'true' to print debug output, set to 'false' to supress print debug output.
+//
 //  A boolean is used so it can be changed by code.
 bool _DEBUG_OUTPUT = false;
 #define DB_PRINT(s) if(_DEBUG_OUTPUT) {Serial.print(s);}
@@ -63,25 +69,25 @@ bool _DEBUG_OUTPUT = false;
 
 // Constants
 //  GPIO Pins (digital)
-//   MaxSonar pins
-#define MAX_PW_PIN 5
-#define MAX_READ_MODE_PIN 4
-#define MAX_SDATA_PIN 2
+//   MaxSonar-EZ pins
+#define MSE_PW_PIN 5
+#define MSE_READ_MODE_PIN 4
+#define MSE_SDATA_PIN 2
 //   HC-SR04 pins
 #define HCSR04_TRIGGER_PIN 6
 #define HCSR04_ECHO_PIN 7
 #define HCSR04_INCLUDE_PIN 13
 //  GPIO Pins (analog)
-#define MAX_AN_PIN A0
+#define MSE_AN_PIN A0
 
 // MaxSonar to Arduino control/adjustments
-#define MAX_READ_CONTINUOUS HIGH
-#define MAX_READ_IDLE LOW
-#define MAX_READ_TRIGGER HIGH
-#define MAX_READ_REQUIRED_DURATION_mS 50
-#define MAX_PW_START_DELAY_MAX_uS 3000
-#define MAX_PW_uS_PER_INCH 147
-#define MAX_ANALOG_DIVISOR 2
+#define MSE_READ_CONTINUOUS HIGH
+#define MSE_READ_IDLE LOW
+#define MSE_READ_TRIGGER HIGH
+#define MSE_READ_REQUIRED_DURATION_mS 50
+#define MSE_PW_START_DELAY_MSE_uS 3000
+#define MSE_PW_uS_PER_INCH 147
+#define MSE_ANALOG_DIVISOR 2
 // HC-SR04 control/constants
 #define HCSR04_INCLUDED LOW
 //  Speed of Sound @ 22°C (71.6°F) = 344.5 m/S = 34450.0 cm/S
@@ -89,17 +95,22 @@ bool _DEBUG_OUTPUT = false;
 #define SOUND_SPEED_uSpIN 73.73
 
 // Globals
-SoftwareSerial maxSerial(MAX_SDATA_PIN, 3, true); // RX,TX,inverse_logic (TX is not used)
-int loopCount = 0; // Used to track the times through loop
+SoftwareSerial mseSerial(MSE_SDATA_PIN, 3, true); // RX,TX,inverse_logic (TX is not used)
+int _loopCount = 0; // Used to track the times through loop
+String _inputBuffer;
+const String MT_STRING = String(""); 
+
 
 void setup() {
   Serial.begin(38400); // Open serial communications
-  maxSerial.begin(9600); // Set the rate for MaxSonar communications
-  maxSerial.listen();
+  mseSerial.begin(9600); // Set the rate for MaxSonar communications
+  mseSerial.listen();
   // Wait for the serial port and allow time for the MaxSonar to initialize (>500mS from power-up)
   while (!Serial || millis() < 500) {
     ; // wait...
   }
+
+  _inputBuffer.reserve(82); // reserve string space for an input line
 
   // Output a header, but don't use ' ' ',' or '\t' so it doesn't get picked up as a Plot Label when using Serial Plotter
   //  Use Unicode 'En-Space (0x2002)' [ ] instead. Be careful when editing this header - copy the 'space' between the 
@@ -108,15 +119,19 @@ void setup() {
   Serial.println("<<<==================================================================================================>>>");
   Serial.println("<<< LV-MaxSonar-EZ and HC-SR04 measurements. Distance data sent: Pulse | Serial | Analog | [HC-SR04] >>>");
   Serial.println("<<<==================================================================================================>>>");
+  //
+  // Output a row of 0's and 100's (~8') to set the scale of the Serial Plotter
+  Serial.println("0\t0\t0\t0");
+  Serial.println("100\t100\t100\t100");
 
   Serial.println();
   delay(1000);
 
   // Configure the rest of the pins used for the MaxSonar and HC-SR04
-  pinMode(MAX_PW_PIN, INPUT);
-  pinMode(MAX_AN_PIN, INPUT);
-  digitalWrite(MAX_READ_MODE_PIN, MAX_READ_IDLE); // Use 'triggered' mode
-  pinMode(MAX_READ_MODE_PIN, OUTPUT);
+  pinMode(MSE_PW_PIN, INPUT);
+  pinMode(MSE_AN_PIN, INPUT);
+  digitalWrite(MSE_READ_MODE_PIN, MSE_READ_IDLE); // Use 'triggered' mode
+  pinMode(MSE_READ_MODE_PIN, OUTPUT);
   // and HC-SR04
   pinMode(HCSR04_INCLUDE_PIN, INPUT_PULLUP); // Will be LOW if HC-SR04 should be included in operation
   digitalWrite(HCSR04_TRIGGER_PIN, HIGH);
@@ -126,7 +141,7 @@ void setup() {
 
 void loop() {
   DB_PRINTLN("\n<<< ---------------------------------------------------------------------------------------------- >>>");
-  DB_PRINT("Loop("); DB_PRINT(loopCount); DB_PRINTLN(")");
+  DB_PRINT("Loop("); DB_PRINT(_loopCount); DB_PRINTLN(")");
   // Trigger a measurement and read the distance using the pulse-width method
   // then the serial and analog methods
   int pwDistance = tiggerAndReadDistanceFromPulse();
@@ -140,12 +155,22 @@ void loop() {
   }
   // Print the graph header at start and then every 20 lines of output
   DB_PRINTLN("\nPulse:\tSerial:\tAnalog:\tHC-SR04:");
-  if (loopCount++ % 20 == 0) {
+  if (_loopCount++ % 20 == 0) {
     Serial.println("Pulse:\tSerial:\tAnalog:\tHC-SR04:");
   }
   Serial.println(dataValues);
+
+  // check for input to enable/disable debug mode
+  String inputLine = serialReadLine();
+  // long enough for "debug on/off true/false"?
+  if (inputLine.length() > 7) {
+    if (!setDebugOutputMode(inputLine)) {
+      Serial.print("Input line doesn't match required format to enable/disable debug mode. Received: "); Serial.println(inputLine);
+    }
+  }
+  
   // wait for 1/4 second total to pass
-  delay(250 - MAX_READ_REQUIRED_DURATION_mS);
+  delay(250 - MSE_READ_REQUIRED_DURATION_mS);
 }
 
 /**
@@ -160,8 +185,8 @@ void loop() {
  * Return: distance in inches
  */
 int readDistanceFromAnalog() {
-  int rawValue = analogRead(MAX_AN_PIN);
-  int distance = rawValue / MAX_ANALOG_DIVISOR;
+  int rawValue = analogRead(MSE_AN_PIN);
+  int distance = rawValue / MSE_ANALOG_DIVISOR;
   DB_PRINT("\nA="); DB_PRINT(rawValue); DB_PRINT(" D="); DB_PRINTLN(distance);
 
   return distance;
@@ -182,26 +207,26 @@ int readDistanceFromSerial() {
   text[0] = '\0';
   
   // Wait for a character to become available (or the maximum time for a measurement)
-  DB_PRINT("\nS ("); DB_PRINT(maxSerial.available()); DB_PRINT(")...");
-  int timeout = MAX_READ_REQUIRED_DURATION_mS;
-  for (; timeout > 0 && maxSerial.available() < 5; timeout--) {
+  DB_PRINT("\nS ("); DB_PRINT(mseSerial.available()); DB_PRINT(")...");
+  int timeout = MSE_READ_REQUIRED_DURATION_mS;
+  for (; timeout > 0 && mseSerial.available() < 5; timeout--) {
     delay(1);
   }
-  DB_PRINT("\n t="); DB_PRINT(timeout); DB_PRINT(" cc="); DB_PRINT(maxSerial.available());
+  DB_PRINT("\n t="); DB_PRINT(timeout); DB_PRINT(" cc="); DB_PRINT(mseSerial.available());
   if (timeout > 0) { // didn't time out
     DB_PRINT(" data=[");
     // Build up the string looking for a carriage-return ('\r') or a maximum of
     // 5 characters. MaxSonar format is "Rxxx\r".
     // 
     // Wait up to the maximum MaxSonar measurement time to receive 5 characters...
-    for(long start=millis(); maxSerial.available() < 5 && millis()-start < MAX_READ_REQUIRED_DURATION_mS; ) {
+    for(long start=millis(); mseSerial.available() < 5 && millis()-start < MSE_READ_REQUIRED_DURATION_mS; ) {
       delay(1); // short delay so we don't slam cpu
     }
 
     int i = 0;
-    if (maxSerial.available() >= 5) {
+    if (mseSerial.available() >= 5) {
       for(; i<5; i++) {
-        char c = (char)maxSerial.read();
+        char c = (char)mseSerial.read();
         DB_PRINT("'0x"); DB_PRINTNB(c,HEX); DB_PRINT("'");
         text[i] = (c != '\r' ? c : '\0'); // terminate with null when RETURN is received
       }
@@ -225,37 +250,37 @@ int readDistanceFromSerial() {
  * Refer to the Timing Diagram and Description in the datasheet for timing details.
  */
 int tiggerAndReadDistanceFromPulse() {
-  DB_PRINTLN("\LV-MaxSonar-EZ Triggered...");
-  // Clear out the maxSerial read buffer...
-  DB_PRINT(" serial-buffer clear("); DB_PRINT(maxSerial.available()); DB_PRINT(")-");
-  maxSerial.stopListening();
-  maxSerial.listen();
-  DB_PRINT("("); DB_PRINT(maxSerial.available()); DB_PRINTLN(")");
+  DB_PRINTLN("LV-MaxSonar-EZ Triggering...");
+  // Clear out the mseSerial read buffer...
+  DB_PRINT(" serial-buffer clear("); DB_PRINT(mseSerial.available()); DB_PRINT(")-");
+  mseSerial.stopListening();
+  mseSerial.listen();
+  DB_PRINT("("); DB_PRINT(mseSerial.available()); DB_PRINTLN(")");
   // Assure that the trigger is set to IDLE (HOLD)
-  digitalWrite(MAX_READ_MODE_PIN, MAX_READ_IDLE);
+  digitalWrite(MSE_READ_MODE_PIN, MSE_READ_IDLE);
   delayMicroseconds(10);
   //
   // Minimum time for readings (start of reading to start of reading)
   // is 49mS.
   //
-  // To guarentee readings are not taken to quickly this method makes
-  // sure that it takes at least this minimum time refore returning by
+  // To guarentee readings are not taken too quickly this method makes
+  // sure that it takes at least this minimum time before returning by
   // recording the start time and waiting for the minimum time to have elapsed.
   //
   unsigned long startMillis = millis();
 
   // Trigger and measure
-  digitalWrite(MAX_READ_MODE_PIN, MAX_READ_TRIGGER);
+  digitalWrite(MSE_READ_MODE_PIN, MSE_READ_TRIGGER);
   delayMicroseconds(10);
-  unsigned long pulseWidth = pulseIn(MAX_PW_PIN, HIGH, (MAX_PW_START_DELAY_MAX_uS + (MAX_READ_REQUIRED_DURATION_mS * 1000L)));
-  int distance = (int)(pulseWidth / MAX_PW_uS_PER_INCH);
-  digitalWrite(MAX_READ_MODE_PIN, MAX_READ_IDLE);
+  unsigned long pulseWidth = pulseIn(MSE_PW_PIN, HIGH, (MSE_PW_START_DELAY_MSE_uS + (MSE_READ_REQUIRED_DURATION_mS * 1000L)));
+  int distance = (int)(pulseWidth / MSE_PW_uS_PER_INCH);
+  digitalWrite(MSE_READ_MODE_PIN, MSE_READ_IDLE);
  
   // Wait for the minimum time to pass (first check for overflow)
   if (millis() < startMillis) {
     startMillis = millis();
   }
-  while (millis() - startMillis < MAX_READ_REQUIRED_DURATION_mS) {
+  while (millis() - startMillis < MSE_READ_REQUIRED_DURATION_mS) {
     delay(1);
   }
   // Analog and Serial can now be read as well
@@ -321,27 +346,35 @@ int sr04ReadDistance()
  * When called, if a newline terminated string has not been collected an empty string  
  * is returned.
  * 
+ * The length of the line is limited to the last 80 characters received. 
+ * (back in the day, CRT terminals were 80 characters by 24 lines)
+ * 
  */
-String _inputBuffer = String();
 String serialReadLine() {
-  String retVal = "";
   while(Serial.available() > 0) {
-    int c = Serial.read();
+    char c = Serial.read();
     if (c == '\n') {
       // Found a 'line' of text. Put the string together and return it.
-      retVal = _inputBuffer;
+      Serial.println(_inputBuffer);
+      String retVal = _inputBuffer;
       _inputBuffer = String();
+      _inputBuffer.reserve(82);
+      return retVal;
     }
     else {
-      _inputBuffer += c;
+      _inputBuffer.concat(c);
+      // limit length to the last 80 chars
+      if (_inputBuffer.length() > 80) {
+        _inputBuffer.remove(0, (_inputBuffer.length() - 80));
+      }
     }
   }
 
-  return retVal;
+  return MT_STRING;
 }
 
 /**
- * Enable/disable DEBUG mode
+ * Enable/disable DEBUG OUTPUT mode (set _DEBUG_OUTPUT true or false)
  * 
  * This takes a string in the form:
  *  debug = 'true'/'false | 'on'/'off'
@@ -351,15 +384,23 @@ String serialReadLine() {
  * the DEBUG mode, the function returns false.
  * 
  */
-bool setDebugMode(String s) {
+bool setDebugOutputMode(String s) {
   bool validInput = false;
 
-  // Convert to lowercase to test for arguments
+  // Trim and convert to lowercase to test for arguments
+  s.trim();
   s.toLowerCase();
   if (s.startsWith("debug ")) {
     s = s.substring(6); // remove 'debug ' and continue...
+    if (s.equals("true") || s.equals("on")) {
+      _DEBUG_OUTPUT = true;
+      validInput = true;
+    }
+    else if (s.equals("false") || s.equals("off")) {
+      _DEBUG_OUTPUT = false;
+      validInput = true;
+    }
   }
-  
 
   return validInput;
 }
